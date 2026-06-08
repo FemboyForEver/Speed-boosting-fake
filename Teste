@@ -903,3 +903,296 @@ DisableFlight()
 if seatConnection then seatConnection:Disconnect() end
 if unseatConnection then unseatConnection:Disconnect() end
 end)
+
+Items.Distance.Parent = Items.BottomTexts;
+Items.Distance.LayoutOrder = 2;
+
+-- Ajout de la ligne de visée (Snaplines / Tracers)  
+            Items.Tracer = Esp:Create("Frame", {  
+                Parent = Esp.ScreenGui,  
+                Visible = false,  
+                BorderSizePixel = 0,  
+                BackgroundColor3 = rgb(255, 255, 255),  
+                ZIndex = 1  
+            })  
+
+            -- Conteneur pour les os du squelette (Skeleton ESP)  
+            Items.Skeleton = {}  
+            local Joints = {  
+                "Head_UpperTorso", "UpperTorso_LowerTorso",   
+                "UpperTorso_LeftUpperArm", "LeftUpperArm_LeftLowerArm", "LeftLowerArm_LeftHand",  
+                "UpperTorso_RightUpperArm", "RightUpperArm_RightLowerArm", "RightLowerArm_RightHand",  
+                "LowerTorso_LeftUpperLeg", "LeftUpperLeg_LeftLowerLeg", "LeftLowerLeg_LeftFoot",  
+                "LowerTorso_RightUpperLeg", "RightUpperLeg_RightLowerLeg", "RightLowerLeg_RightFoot"  
+            }  
+            for _, JointName in ipairs(Joints) do  
+                Items.Skeleton[JointName] = Esp:Create("Frame", {  
+                    Parent = Esp.ScreenGui,  
+                    Visible = false,  
+                    BorderSizePixel = 0,  
+                    BackgroundColor3 = rgb(255, 255, 255), -- Blanc par défaut pour le squelette  
+                    ZIndex = 2  
+                })  
+            end  
+
+            Items.ChamsHighlight = Esp:Create("Highlight", {  
+                Parent = Esp.ScreenGui,  
+                Enabled = false,  
+                DepthMode = Enum.HighlightDepthMode.AlwaysOnTop  
+            })  
+    end  
+
+    Esp.Players[player] = Data  
+    return Data  
+end  
+
+function Esp:Unload()  
+    for _, connection in pairs(Esp.Connections) do  
+        connection:Disconnect()  
+    end  
+    Esp.ScreenGui:Destroy()  
+    Esp.Cache:Destroy()  
+    getgenv().Esp = nil  
+end
+
+end
+
+local ActiveFly = false
+local FlySpeed = 100
+local FlyVelocity, FlyGyro
+
+local function StartFly()
+local Character = LocalPlayer.Character
+local RootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+if not RootPart then return end
+
+FlyVelocity = Instance.new("BodyVelocity")  
+FlyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)  
+FlyVelocity.Velocity = Vector3.new(0, 0, 0)  
+FlyVelocity.Parent = RootPart  
+
+FlyGyro = Instance.new("BodyGyro")  
+FlyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)  
+FlyGyro.CFrame = RootPart.CFrame  
+FlyGyro.Parent = RootPart  
+
+ActiveFly = true
+
+end
+
+local function StopFly()
+ActiveFly = false
+if FlyVelocity then FlyVelocity:Destroy() end
+if FlyGyro then FlyGyro:Destroy() end
+end
+
+-- Calcule la direction exacte basée sur les inputs et là où regarde ta caméra
+local function GetFlyDirection()
+local Direction = Vector3.new(0, 0, 0)
+
+-- Clavier (WASD / ZQSD)  
+if InputService:IsKeyDown(Enum.KeyCode.W) or InputService:IsKeyDown(Enum.KeyCode.Z) then  
+    Direction += Camera.CFrame.LookVector  
+end  
+if InputService:IsKeyDown(Enum.KeyCode.S) then  
+    Direction -= Camera.CFrame.LookVector  
+end  
+if InputService:IsKeyDown(Enum.KeyCode.A) or InputService:IsKeyDown(Enum.KeyCode.Q) then  
+    Direction -= Camera.CFrame.RightVector  
+end  
+if InputService:IsKeyDown(Enum.KeyCode.D) then  
+    Direction += Camera.CFrame.RightVector  
+end  
+if InputService:IsKeyDown(Enum.KeyCode.Space) then  
+    Direction += Vector3.new(0, 1, 0)  
+end  
+if InputService:IsKeyDown(Enum.KeyCode.LeftShift) then  
+    Direction -= Vector3.new(0, 1, 0)  
+end  
+
+-- Manette (Joystick gauche + Gâchettes)  
+local Gamepads = InputService:GetConnectedGamepads()  
+if #Gamepads > 0 then  
+    local State = InputService:GetGamepadState(Gamepads[1])  
+    for _, Input in pairs(State) do  
+        if Input.KeyCode == Enum.KeyCode.Thumbstick1 then  
+            Direction += Camera.CFrame.LookVector * Input.Position.Y  
+            Direction += Camera.CFrame.RightVector * Input.Position.X  
+        elseif Input.KeyCode == Enum.KeyCode.ButtonR2 then -- Monter  
+            Direction += Vector3.new(0, Input.Position.Z, 0)  
+        elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then -- Descendre  
+            Direction -= Vector3.new(0, Input.Position.Z, 0)  
+        end  
+    end  
+end  
+
+return Direction
+
+end
+
+-- Helper pour dessiner proprement une ligne 2D entre deux positions à l'écran
+local function Draw2DLine(UIFrame, PointA, PointB, Thickness, Color)
+local Distance = (PointA - PointB).Magnitude
+UIFrame.Size = UDim2.fromOffset(Distance, Thickness)
+UIFrame.Position = UDim2.fromOffset((PointA.X + PointB.X) / 2, (PointA.Y + PointB.Y) / 2)
+UIFrame.Rotation = math.deg(math.atan2(PointB.Y - PointA.Y, PointB.X - PointA.X))
+UIFrame.BackgroundColor3 = Color or Color3.new(1, 1, 1)
+UIFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+UIFrame.Visible = true
+end
+
+Esp:Connection(RunService.RenderStepped, function()
+if not Options["Enabled"] then
+Esp.ScreenGui.Enabled = false
+return
+else
+Esp.ScreenGui.Enabled = true
+end
+
+-- GESTION RENDU VOL DIRECTIONNEL  
+if ActiveFly and FlyVelocity and FlyGyro then  
+    local TargetDir = GetFlyDirection()  
+    FlyVelocity.Velocity = TargetDir.Magnitude > 0 and TargetDir.Unit * FlySpeed or Vector3.new(0, 0, 0)  
+    FlyGyro.CFrame = Camera.CFrame  
+end  
+
+-- GESTION RENDU ESP AUTOMATIQUE (BOX, TRACERS, SQUELETTE)  
+local ScreenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y) -- Point de départ des lignes (Bas de l'écran)  
+
+for Player, Data in pairs(Esp.Players) do  
+    if Player and Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") then  
+        local Char = Player.Character  
+        local Torso = Char.HumanoidRootPart  
+        local Hum = Char:FindFirstChildOfClass("Humanoid")  
+
+        if Hum and Hum.Health > 0 then  
+            local BoxSize, BoxPosition, OnScreen, NewDistance = Esp:BoxSolve(Torso)  
+
+            if OnScreen and NewDistance <= Options["Render Distance"] then  
+                -- 1. Affichage de la boîte de base  
+                Data.Items.Holder.Visible = true  
+                Data.Items.Holder.Size = dim2(0, BoxSize.X, 0, BoxSize.Y)  
+                Data.Items.Holder.Position = dim2(0, BoxPosition.X, 0, BoxPosition.Y)  
+
+                -- Barre de vie  
+                if Options["Healthbar"] then  
+                    Data.Items.Healthbar.Visible = true  
+                    local HealthPercent = math.clamp(Hum.Health / Hum.MaxHealth, 0, 1)  
+                    Data.Items.HealthbarAccent.Size = dim2(1, -2, HealthPercent, -2)  
+                else  
+                    Data.Items.Healthbar.Visible = false  
+                end  
+
+                -- Distance en texte  
+                if Options["Distance_Text"] then  
+                    Data.Items.Distance.Visible = true  
+                    Data.Items.Distance.Text = string.format("[%d studs]", math.floor(NewDistance / 0.333))  
+                else  
+                    Data.Items.Distance.Visible = false  
+                end  
+
+                -- 2. Affichage automatique des Lignes de Visée (Tracers)  
+                local HeadPos, HeadOnScreen = Esp:ConvertScreenPoint(Char:FindFirstChild("Head") and Char.Head.Position or Torso.Position)  
+                Draw2DLine(Data.Items.Tracer, ScreenCenter, Vector2.new(HeadPos.X, HeadPos.Y), 1.5, rgb(255, 0, 0))  
+
+                -- 3. Affichage du Squelette 2D Perfect (R15 et R6 compatible)  
+                local function GetPartScreenPos(PartName)  
+                    local Part = Char:FindFirstChild(PartName)  
+                    if Part then  
+                        local Pos, Visible = Esp:ConvertScreenPoint(Part.Position)  
+                        if Visible then return Vector2.new(Pos.X, Pos.Y) end  
+                    end  
+                    return nil  
+                end  
+
+                local SkeletonConnections = {  
+                    {"Head_UpperTorso", "Head", "UpperTorso"},  
+                    {"UpperTorso_LowerTorso", "UpperTorso", "LowerTorso"},  
+                    {"UpperTorso_LeftUpperArm", "UpperTorso", "LeftUpperArm"},  
+                    {"LeftUpperArm_LeftLowerArm", "LeftUpperArm", "LeftLowerArm"},  
+                    {"LeftLowerArm_LeftHand", "LeftLowerArm", "LeftHand"},  
+                    {"UpperTorso_RightUpperArm", "UpperTorso", "RightUpperArm"},  
+                    {"RightUpperArm_RightLowerArm", "RightUpperArm", "RightLowerArm"},  
+                    {"RightLowerArm_RightHand", "RightLowerArm", "RightHand"},  
+                    {"LowerTorso_LeftUpperLeg", "LowerTorso", "LeftUpperLeg"},  
+                    {"LeftUpperLeg_LeftLowerLeg", "LeftUpperLeg", "LeftLowerLeg"},  
+                    {"LeftLowerLeg_LeftFoot", "LeftLowerLeg", "LeftFoot"},  
+                    {"LowerTorso_RightUpperLeg", "LowerTorso", "RightUpperLeg"},  
+                    {"RightUpperLeg_RightLowerLeg", "RightUpperLeg", "RightLowerLeg"},  
+                    {"RightLowerLeg_RightFoot", "RightLowerLeg", "RightFoot"}  
+                }  
+
+                -- Fallback pour la compatibilité R6 automatique  
+                if Char:FindFirstChild("Torso") then  
+                    SkeletonConnections = {  
+                        {"Head_UpperTorso", "Head", "Torso"},  
+                        {"UpperTorso_LeftUpperArm", "Torso", "Left Arm"},  
+                        {"UpperTorso_RightUpperArm", "Torso", "Right Arm"},  
+                        {"LowerTorso_LeftUpperLeg", "Torso", "Left Leg"},  
+                        {"LowerTorso_RightUpperLeg", "Torso", "Right Leg"}  
+                    }  
+                end  
+
+                for JointName, BoneFrame in pairs(Data.Items.Skeleton) do  
+                    BoneFrame.Visible = false -- Masquer par défaut s'il n'y a pas de match  
+                end  
+
+                for _, Connection in ipairs(SkeletonConnections) do  
+                    local FrameName, PartA, PartB = Connection[1], Connection[2], Connection[3]  
+                    local PosA = GetPartScreenPos(PartA)  
+                    local PosB = GetPartScreenPos(PartB)  
+
+                    if PosA and PosB and Data.Items.Skeleton[FrameName] then  
+                        Draw2DLine(Data.Items.Skeleton[FrameName], PosA, PosB, 1.5, rgb(0, 255, 255))  
+                    end  
+                end  
+
+                -- Mode Silhouette (Chams)  
+                if Options["ChamsEnabled"] then  
+                    Data.Items.ChamsHighlight.Enabled = true  
+                    Data.Items.ChamsHighlight.Adornee = Char  
+                    Data.Items.ChamsHighlight.FillColor = Options["Chams Fill"].Color  
+                    Data.Items.ChamsHighlight.OutlineColor = Options["Chams Outline"].Color  
+                else  
+                    Data.Items.ChamsHighlight.Enabled = false  
+                end  
+            else  
+                Data.Items.Holder.Visible = false  
+                Data.Items.Tracer.Visible = false  
+                Data.Items.ChamsHighlight.Enabled = false  
+                for _, Bone in pairs(Data.Items.Skeleton) do Bone.Visible = false end  
+            end  
+        else  
+            Data.Items.Holder.Visible = false  
+            Data.Items.Tracer.Visible = false  
+            Data.Items.ChamsHighlight.Enabled = false  
+            for _, Bone in pairs(Data.Items.Skeleton) do Bone.Visible = false end  
+        end  
+    end  
+end
+
+end)
+local function TrackPlayer(Player)
+if Player ~= LocalPlayer then Esp.CreateObject(Player) end
+end
+
+Esp:Connection(Players.PlayerAdded, TrackPlayer)
+Esp:Connection(Players.PlayerRemoving, function(Player)
+if Esp.Players[Player] then
+if Esp.Players[Player].Items.Holder then Esp.Players[Player].Items.Holder:Destroy() end
+if Esp.Players[Player].Items.Tracer then Esp.Players[Player].Items.Tracer:Destroy() end
+if Esp.Players[Player].Items.ChamsHighlight then Esp.Players[Player].Items.ChamsHighlight:Destroy() end
+for _, Bone in pairs(Esp.Players[Player].Items.Skeleton) do Bone:Destroy() end
+Esp.Players[Player] = nil
+end
+end)
+
+for _, Player in pairs(Players:GetPlayers()) do TrackPlayer(Player) end
+
+-- Commutateur du Vol directionnel (Touche 'F' sur clavier / Bouton 'Y' sur manette)
+InputService.InputBegan:Connect(function(Input, Processed)
+if Processed then return end
+if Input.KeyCode == Enum.KeyCode.F or Input.KeyCode == Enum.KeyCode.ButtonY then
+if ActiveFly then StopFly() else StartFly() end
+end
+end)
