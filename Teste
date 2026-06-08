@@ -1,0 +1,897 @@
+-- 🚗 Menu by Shido (Rayfield Adaptation v3.5 - Full Integrated Master Script)
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- Wait for player GUI to be ready
+local player = LocalPlayer or Players.PlayerAdded:Wait()
+player:WaitForChild("PlayerGui")
+
+-- ========= CONFIG DU MENU SHIDO =========
+local velocityMult = 0.5 -- puissance boost basique
+local velocityMult2 = 0.4 -- puissance frein
+local jumpPower = 50      -- puissance saut
+local maxMPH = 1000        -- vitesse max pour speed changer
+local accelerationMPH = 300 -- accélération MPH/s
+local realisticMode = false
+local accelerating = false
+
+-- ========= CONFIG DU VOL AVANCÉ & VARIABLES GLOBALES =========
+local velocityHandlerName = "VehicleFlyVelocity32"
+local gyroHandlerName = "VehicleFlyGyro64"
+local VelocityHandler = nil
+local GyroHandler = nil
+
+local isAntiLockOn = false
+local FlyEnabled = false
+local flightWithoutFlyEnabled = false
+local isPitchOn = false
+
+local seatConnection = nil
+local unseatConnection = nil
+local activeConnections = {}
+local controllerEnabled = false
+local movementDirection = {}
+
+-- Vitesses de déplacement par défaut du système de vol
+local forwardVelocity = 100 
+local leftVelocity = 100
+local rightVelocity = 100
+local upVelocity = 50
+local downVelocity = 50
+local rotationSpeed = 5
+local flyGlobalSpeedMultiplier = 1
+
+-- Minimized States & Backups
+local isGuiMinimized = false
+local originalMainFramePosition = nil
+local originalButtonPositions = {}
+
+-- Conversion MPH -> studs/s
+local function MPHtoStuds(mph)
+	return mph / 0.626
+end
+
+-- ========= CONFIG DES BINDS (CLAVIER & MANETTE) =========
+local binds = {
+	boost = { Keyboard = Enum.KeyCode.E, Gamepad = Enum.KeyCode.ButtonA },
+	accel = { Keyboard = Enum.KeyCode.Z, Gamepad = Enum.KeyCode.ButtonR2 }, 
+	brake = { Keyboard = Enum.KeyCode.S, Gamepad = Enum.KeyCode.ButtonB },  
+	stop  = { Keyboard = Enum.KeyCode.X, Gamepad = Enum.KeyCode.ButtonX },
+	jump  = { Keyboard = Enum.KeyCode.Space, Gamepad = Enum.KeyCode.ButtonY },
+	flyToggle = { Keyboard = Enum.KeyCode.F, Gamepad = Enum.KeyCode.ButtonL1 }
+}
+
+-- ========= CREATION DES INSTANCES (GUI ORIGINALE) =========
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local InnerFrame = Instance.new("Frame")
+local SpeedTextBox = Instance.new("TextBox")
+local DecreaseButton = Instance.new("TextButton")
+local IncreaseButton = Instance.new("TextButton")
+local FlyButton = Instance.new("TextButton")
+local FwFButton = Instance.new("TextButton")
+local DestroyButton = Instance.new("TextButton")
+local ControllerButton = Instance.new("TextButton")
+local UIGradient = Instance.new("UIGradient")
+local UICorner = Instance.new("UICorner")
+local UIStroke = Instance.new("UIStroke")
+
+-- Controller GUI Instances
+local ControllerGui = Instance.new("ScreenGui")
+local ControllerFrame = Instance.new("Frame")
+local ForwardButton = Instance.new("TextButton")
+local BackwardButton = Instance.new("TextButton")
+local LeftButton = Instance.new("TextButton")
+local RightButton = Instance.new("TextButton")
+local AntiLockButton = Instance.new("TextButton")
+local PitchButton = Instance.new("TextButton")
+
+-- Left Side Movement GUI
+local LeftSideGui = Instance.new("ScreenGui")
+local LeftSideFrame = Instance.new("Frame")
+local UpButton = Instance.new("TextButton")
+local DownButton = Instance.new("TextButton")
+local RotateLeftButton = Instance.new("TextButton")
+local RotateRightButton = Instance.new("TextButton")
+
+-- Minimize Button
+local MinimizeButton = Instance.new("TextButton")
+
+local function initializeGUI()
+	ScreenGui.Parent = player.PlayerGui
+	ScreenGui.ResetOnSpawn = false
+	ScreenGui.Name = "VehicleFlyGui"
+
+	MainFrame.Parent = ScreenGui  
+	MainFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)  
+	MainFrame.Position = UDim2.new(0.3, 0, 0.5, -100)  
+	MainFrame.Size = UDim2.new(0, 200, 0, 230)  
+	MainFrame.Active = true  
+	MainFrame.Draggable = true  
+
+	UIStroke.Parent = MainFrame  
+	UIStroke.Color = Color3.fromRGB(0, 0, 0)  
+	UIStroke.Thickness = 2  
+
+	Title.Parent = MainFrame  
+	Title.BackgroundTransparency = 1  
+	Title.Size = UDim2.new(1, 0, 0.2, 0)  
+	Title.Position = UDim2.new(0, 0, 0, 0)  
+	Title.Font = Enum.Font.GothamBold  
+	Title.Text = "Vehicle Fly GUI"  
+	Title.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	Title.TextScaled = true  
+
+	InnerFrame.Parent = MainFrame  
+	InnerFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)  
+	InnerFrame.Size = UDim2.new(1, 0, 0.75, 0)  
+	InnerFrame.Position = UDim2.new(0, 0, 0.2, 0)  
+
+	SpeedTextBox.Parent = InnerFrame  
+	SpeedTextBox.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	SpeedTextBox.Position = UDim2.new(0.5, -25, 0.1, 0)  
+	SpeedTextBox.Size = UDim2.new(0, 50, 0, 30)  
+	SpeedTextBox.Font = Enum.Font.Gotham  
+	SpeedTextBox.Text = "1"  
+	SpeedTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	SpeedTextBox.TextScaled = true  
+	SpeedTextBox.PlaceholderText = "Speed"  
+	originalButtonPositions[SpeedTextBox] = SpeedTextBox.Position  
+
+	DecreaseButton.Parent = InnerFrame  
+	DecreaseButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	DecreaseButton.Size = UDim2.new(0.2, 0, 0, 25)  
+	DecreaseButton.Position = UDim2.new(0.1, 0, 0.1, 0)  
+	DecreaseButton.Font = Enum.Font.Gotham  
+	DecreaseButton.Text = "-"  
+	DecreaseButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	DecreaseButton.TextScaled = true  
+	originalButtonPositions[DecreaseButton] = DecreaseButton.Position  
+
+	IncreaseButton.Parent = InnerFrame  
+	IncreaseButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	IncreaseButton.Size = UDim2.new(0.2, 0, 0, 25)  
+	IncreaseButton.Position = UDim2.new(0.7, 0, 0.1, 0)  
+	IncreaseButton.Font = Enum.Font.Gotham  
+	IncreaseButton.Text = "+"  
+	IncreaseButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	IncreaseButton.TextScaled = true  
+	originalButtonPositions[IncreaseButton] = IncreaseButton.Position  
+
+	FlyButton.Parent = InnerFrame  
+	FlyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	FlyButton.Size = UDim2.new(0.4, 0, 0, 25)  
+	FlyButton.Position = UDim2.new(0.1, 0, 0.33, 0)  
+	FlyButton.Font = Enum.Font.GothamBold  
+	FlyButton.Text = "Fly"  
+	FlyButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	FlyButton.TextScaled = true  
+	originalButtonPositions[FlyButton] = FlyButton.Position  
+
+	FwFButton.Parent = InnerFrame  
+	FwFButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	FwFButton.Size = UDim2.new(0.4, 0, 0, 25)  
+	FwFButton.Position = UDim2.new(0.5, 0, 0.33, 0)  
+	FwFButton.Font = Enum.Font.GothamBold  
+	FwFButton.Text = "FwF"  
+	FwFButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	FwFButton.TextScaled = true  
+	originalButtonPositions[FwFButton] = FwFButton.Position  
+
+	DestroyButton.Parent = InnerFrame  
+	DestroyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	DestroyButton.Size = UDim2.new(0.8, 0, 0, 25)  
+	DestroyButton.Position = UDim2.new(0.1, 0, 0.53, 0)  
+	DestroyButton.Font = Enum.Font.GothamBold  
+	DestroyButton.Text = "Destroy"  
+	DestroyButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	DestroyButton.TextScaled = true  
+	originalButtonPositions[DestroyButton] = DestroyButton.Position  
+
+	ControllerButton.Parent = InnerFrame  
+	ControllerButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	ControllerButton.Size = UDim2.new(0.8, 0, 0, 25)  
+	ControllerButton.Position = UDim2.new(0.1, 0, 0.73, 0)  
+	ControllerButton.Font = Enum.Font.GothamBold  
+	ControllerButton.Text = "Controller"  
+	ControllerButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	ControllerButton.TextScaled = true  
+	originalButtonPositions[ControllerButton] = ControllerButton.Position  
+
+	UICorner.CornerRadius = UDim.new(0.1, 0)  
+	UICorner.Parent = MainFrame  
+
+	UIGradient.Parent = MainFrame  
+	UIGradient.Color = ColorSequence.new{  
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 45, 45)),  
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(75, 75, 75))  
+	}  
+
+	ControllerGui.Parent = player.PlayerGui  
+	ControllerGui.ResetOnSpawn = false  
+	ControllerGui.Enabled = false  
+	ControllerGui.Name = "VehicleFlyControllerGui"  
+
+	ControllerFrame.Parent = ControllerGui  
+	ControllerFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)  
+	ControllerFrame.Position = UDim2.new(0.78, -75, 0.5, -75)  
+	ControllerFrame.Size = UDim2.new(0, 150, 0, 150)  
+
+	local ControllerCorner = Instance.new("UICorner")  
+	ControllerCorner.CornerRadius = UDim.new(0.5, 0)  
+	ControllerCorner.Parent = ControllerFrame  
+
+	ForwardButton.Parent = ControllerFrame  
+	ForwardButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	ForwardButton.Size = UDim2.new(0, 50, 0, 50)  
+	ForwardButton.Position = UDim2.new(0.5, -25, 0, 10)  
+	ForwardButton.Font = Enum.Font.GothamBold  
+	ForwardButton.Text = "▲"  
+	ForwardButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	ForwardButton.TextScaled = true  
+	originalButtonPositions[ForwardButton] = ForwardButton.Position  
+
+	BackwardButton.Parent = ControllerFrame  
+	BackwardButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	BackwardButton.Size = UDim2.new(0, 50, 0, 50)  
+	BackwardButton.Position = UDim2.new(0.5, -25, 0, 85)  
+	BackwardButton.Font = Enum.Font.GothamBold  
+	BackwardButton.Text = "▼"  
+	BackwardButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	BackwardButton.TextScaled = true  
+	originalButtonPositions[BackwardButton] = BackwardButton.Position  
+
+	LeftButton.Parent = ControllerFrame  
+	LeftButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	LeftButton.Size = UDim2.new(0, 50, 0, 50)  
+	LeftButton.Position = UDim2.new(0, 0, 0.5, -25)  
+	LeftButton.Font = Enum.Font.GothamBold  
+	LeftButton.Text = "<"  
+	LeftButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	LeftButton.TextScaled = true  
+	originalButtonPositions[LeftButton] = LeftButton.Position  
+
+	RightButton.Parent = ControllerFrame  
+	RightButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	RightButton.Size = UDim2.new(0, 50, 0, 50)  
+	RightButton.Position = UDim2.new(1, -50, 0.5, -25)  
+	RightButton.Font = Enum.Font.GothamBold  
+	RightButton.Text = ">"  
+	RightButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	RightButton.TextScaled = true  
+	originalButtonPositions[RightButton] = RightButton.Position  
+
+	AntiLockButton.Parent = ControllerFrame  
+	AntiLockButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	AntiLockButton.Size = UDim2.new(0, 50, 0, 30)  
+	AntiLockButton.Position = UDim2.new(0.5, -25, 0, 60)  
+	AntiLockButton.Font = Enum.Font.GothamBold  
+	AntiLockButton.Text = "A-L"  
+	AntiLockButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	AntiLockButton.TextScaled = true  
+	originalButtonPositions[AntiLockButton] = AntiLockButton.Position  
+
+	PitchButton.Parent = ControllerFrame  
+	PitchButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	PitchButton.Size = UDim2.new(0, 50, 0, 30)  
+	PitchButton.Position = UDim2.new(0.16, -25, 0, 20)  
+	PitchButton.Font = Enum.Font.GothamBold  
+	PitchButton.Text = "Pitch: Off"  
+	PitchButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	PitchButton.TextScaled = true  
+	originalButtonPositions[PitchButton] = PitchButton.Position  
+
+	LeftSideGui.Parent = player.PlayerGui  
+	LeftSideGui.ResetOnSpawn = false  
+	LeftSideGui.Enabled = false  
+	LeftSideGui.Name = "VehicleFlyLeftSideGui"  
+
+	LeftSideFrame.Parent = LeftSideGui  
+	LeftSideFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)  
+	LeftSideFrame.Position = UDim2.new(0.1, 20, 0.5, -75)  
+	LeftSideFrame.Size = UDim2.new(0, 150, 0, 150)  
+
+	local LeftSideCorner = Instance.new("UICorner")  
+	LeftSideCorner.CornerRadius = UDim.new(0.5, 0)  
+	LeftSideCorner.Parent = LeftSideFrame  
+
+	UpButton.Parent = LeftSideFrame  
+	UpButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	UpButton.Size = UDim2.new(0, 50, 0, 50)  
+	UpButton.Position = UDim2.new(0.5, -25, 0, 10)  
+	UpButton.Font = Enum.Font.GothamBold  
+	UpButton.Text = "↑"  
+	UpButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	UpButton.TextScaled = true  
+	originalButtonPositions[UpButton] = UpButton.Position  
+
+	DownButton.Parent = LeftSideFrame  
+	DownButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	DownButton.Size = UDim2.new(0, 50, 0, 50)  
+	DownButton.Position = UDim2.new(0.5, -25, 0, 90)  
+	DownButton.Font = Enum.Font.GothamBold  
+	DownButton.Text = "↓"  
+	DownButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	DownButton.TextScaled = true  
+	originalButtonPositions[DownButton] = DownButton.Position  
+
+	RotateLeftButton.Parent = LeftSideFrame  
+	RotateLeftButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	RotateLeftButton.Size = UDim2.new(0, 50, 0, 50)  
+	RotateLeftButton.Position = UDim2.new(0.86, -25, 0, 50)  
+	RotateLeftButton.Font = Enum.Font.GothamBold  
+	RotateLeftButton.Text = "⟩>"  
+	RotateLeftButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	RotateLeftButton.TextScaled = true  
+	originalButtonPositions[RotateLeftButton] = RotateLeftButton.Position  
+
+	RotateRightButton.Parent = LeftSideFrame  
+	RotateRightButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	RotateRightButton.Size = UDim2.new(0, 50, 0, 50)  
+	RotateRightButton.Position = UDim2.new(0.14, -25, 0, 50)  
+	RotateRightButton.Font = Enum.Font.GothamBold  
+	RotateRightButton.Text = "<⟨"  
+	RotateRightButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	RotateRightButton.TextScaled = true  
+	originalButtonPositions[RotateRightButton] = RotateRightButton.Position  
+
+	MinimizeButton.Parent = MainFrame  
+	MinimizeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)  
+	MinimizeButton.Size = UDim2.new(0, 25, 0, 25)  
+	MinimizeButton.Position = UDim2.new(-0.15, 0, 0, 0)  
+	MinimizeButton.Font = Enum.Font.GothamBold  
+	MinimizeButton.Text = "⇧"  
+	MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)  
+	MinimizeButton.TextScaled = true  
+	MinimizeButton.ZIndex = 2  
+	originalButtonPositions[MinimizeButton] = MinimizeButton.Position  
+
+	originalMainFramePosition = MainFrame.Position  
+end
+
+-- ========= FONCTIONS DE BASE FONCTIONNELLES MOTEURS =========
+local function GetSeat()
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChildWhichIsA("Humanoid")
+	if hum then return hum.SeatPart end
+end
+
+local function Boost()
+	local seat = GetSeat()
+	if seat and seat:IsA("VehicleSeat") then
+		seat.AssemblyLinearVelocity += seat.CFrame.LookVector * (velocityMult * 120)
+	end
+end
+
+local function Brake()
+	accelerating = false
+	local seat = GetSeat()
+	if seat and seat:IsA("VehicleSeat") then
+		seat.AssemblyLinearVelocity *= (1 - velocityMult2)
+	end
+end
+
+local function Stop()
+	accelerating = false
+	local seat = GetSeat()
+	if seat and seat:IsA("VehicleSeat") then
+		seat.AssemblyLinearVelocity = Vector3.zero
+		seat.AssemblyAngularVelocity = Vector3.zero
+	end
+end
+
+local function Jump()
+	local seat = GetSeat()
+	if seat and seat:IsA("VehicleSeat") then
+		seat.AssemblyLinearVelocity += Vector3.new(0, jumpPower, 0)
+	end
+end
+
+-- Boucle Heartbeat Moteur classique pour l'accélération au sol
+RunService.Heartbeat:Connect(function(dt)
+	local seat = GetSeat()
+	if not seat or not seat:IsA("VehicleSeat") then return end
+
+	if accelerating then
+		if realisticMode then
+			local forward = seat.CFrame.LookVector
+			local vel = seat.AssemblyLinearVelocity
+			seat.AssemblyLinearVelocity = vel + forward * (accelerationMPH * dt / 2)
+		else
+			local targetSpeed = MPHtoStuds(maxMPH)
+			local accelStuds = MPHtoStuds(accelerationMPH)
+			local forward = seat.CFrame.LookVector
+			local vel = seat.AssemblyLinearVelocity
+			local currentSpeed = vel:Dot(forward)
+			local newSpeed = math.min(currentSpeed + accelStuds * dt, targetSpeed)
+			seat.AssemblyLinearVelocity = Vector3.new(forward.X * newSpeed, vel.Y, forward.Z * newSpeed)
+		end
+	end
+end)
+
+-- ========= CONFIGURATION DES INSTANCES DE FLIGHT CORE =========
+local function setupFlyInstances(character)
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+
+	local existingVelocity = character.HumanoidRootPart:FindFirstChild(velocityHandlerName)
+	local existingGyro = character.HumanoidRootPart:FindFirstChild(gyroHandlerName)
+
+	if existingVelocity then existingVelocity:Destroy() end
+	if existingGyro then existingGyro:Destroy() end
+
+	VelocityHandler = Instance.new("BodyVelocity")
+	VelocityHandler.Name = velocityHandlerName
+	VelocityHandler.Parent = character.HumanoidRootPart
+	VelocityHandler.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	VelocityHandler.Velocity = Vector3.new()
+
+	GyroHandler = Instance.new("BodyGyro")
+	GyroHandler.Name = gyroHandlerName
+	GyroHandler.Parent = character.HumanoidRootPart
+	GyroHandler.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	GyroHandler.P = 1000
+	GyroHandler.D = 50
+	GyroHandler.CFrame = character.HumanoidRootPart.CFrame
+end
+
+local function EnableFlight()
+	local character = player.Character
+	if character then setupFlyInstances(character) end
+end
+
+local function DisableFlight()
+	if VelocityHandler then VelocityHandler:Destroy() VelocityHandler = nil end
+	if GyroHandler then GyroHandler:Destroy() GyroHandler = nil end
+end
+
+local function cleanupConnections()
+	for _, connection in pairs(activeConnections) do
+		if connection and connection.Disconnect then connection:Disconnect() end
+	end
+	activeConnections = {}
+end
+
+local function resetControllerOnSpawn()
+	ControllerGui.Enabled = false
+	LeftSideGui.Enabled = false
+	controllerEnabled = false
+end
+player.CharacterAdded:Connect(resetControllerOnSpawn)
+player.CharacterRemoving:Connect(resetControllerOnSpawn)
+
+-- ========= LOGIQUE ET BOUCLE DE VOL COMPLÈTE (RENDERSTEPPED) =========
+local function handleInput()
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChild("Humanoid")
+	if not humanoid then return end
+
+	if FlyEnabled and (humanoid.SeatPart or flightWithoutFlyEnabled) then
+		local rootPart = character:FindFirstChild("HumanoidRootPart")
+		if not rootPart or not VelocityHandler then return end
+
+		local gyro = rootPart:FindFirstChild(gyroHandlerName)
+		local speed = tonumber(SpeedTextBox.Text) or 1
+		local velocity = Vector3.new()
+
+		local function getMovementCFrame()
+			if isPitchOn and gyro then
+				return gyro.CFrame
+			elseif gyro then
+				local lookVector = gyro.CFrame.LookVector
+				return CFrame.new(gyro.Parent.Position, gyro.Parent.Position + Vector3.new(lookVector.X, 0, lookVector.Z))
+			end
+			return rootPart.CFrame
+		end
+
+		local movementCFrame = getMovementCFrame()
+
+		-- Traitement des inputs stockés (Boutons tactiles d'origine)
+		for _, direction in ipairs(movementDirection) do
+			if direction == "forward" then
+				velocity += movementCFrame.LookVector * forwardVelocity
+			elseif direction == "backward" then
+				velocity += -movementCFrame.LookVector * forwardVelocity
+			elseif direction == "left" then
+				velocity += movementCFrame.RightVector * -leftVelocity
+			elseif direction == "right" then
+				velocity += movementCFrame.RightVector * rightVelocity
+			elseif direction == "up" then
+				velocity += Vector3.new(0, upVelocity, 0)
+			elseif direction == "down" then
+				velocity += Vector3.new(0, -downVelocity, 0)
+			elseif direction == "rotateLeft" and gyro then
+				gyro.CFrame = gyro.CFrame * CFrame.Angles(0, math.rad(-rotationSpeed), 0)
+			elseif direction == "rotateRight" and gyro then
+				gyro.CFrame = gyro.CFrame * CFrame.Angles(0, math.rad(rotationSpeed), 0)
+			end
+		end
+
+		-- Lecture des touches du clavier en simultané (Touches standards de vol)
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Z) then velocity += movementCFrame.LookVector * forwardVelocity end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then velocity += -movementCFrame.LookVector * forwardVelocity end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then velocity += movementCFrame.RightVector * -leftVelocity end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then velocity += movementCFrame.RightVector * rightVelocity end
+
+		-- Intégration du Joystick Manette
+		local thumbstickDirection = Vector2.new(0, 0)
+		pcall(function()
+			local controlModule = require(player.PlayerScripts:WaitForChild("PlayerModule"):WaitForChild("ControlModule"))
+			thumbstickDirection = controlModule:GetMoveVector()
+		end)
+
+		if #movementDirection > 0 or velocity.Magnitude > 0 or thumbstickDirection.Magnitude > 0 then
+			local combinedVelocity = velocity + (
+				movementCFrame.RightVector * thumbstickDirection.X * forwardVelocity * 2 +
+				movementCFrame.LookVector * -thumbstickDirection.Z * forwardVelocity * 2
+			)
+
+			if isAntiLockOn and humanoid.SeatPart then
+				local seatForward = humanoid.SeatPart.CFrame.LookVector
+				local seatRight = humanoid.SeatPart.CFrame.RightVector
+				local seatUp = humanoid.SeatPart.CFrame.UpVector
+				local seatVelocity = Vector3.new()
+
+				for _, direction in ipairs(movementDirection) do
+					if direction == "forward" then seatVelocity += seatForward * forwardVelocity
+					elseif direction == "backward" then seatVelocity += -seatForward * forwardVelocity
+					elseif direction == "left" then seatVelocity += -seatRight * leftVelocity
+					elseif direction == "right" then seatVelocity += seatRight * rightVelocity
+					elseif direction == "up" then seatVelocity += seatUp * upVelocity
+					elseif direction == "down" then seatVelocity += -seatUp * downVelocity
+					end
+				end
+
+				if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Z) then seatVelocity += seatForward * forwardVelocity end
+				if UserInputService:IsKeyDown(Enum.KeyCode.S) then seatVelocity += -seatForward * forwardVelocity end
+
+				VelocityHandler.Velocity = seatVelocity * speed * flyGlobalSpeedMultiplier
+			else
+				VelocityHandler.Velocity = combinedVelocity * speed * flyGlobalSpeedMultiplier
+			end
+		else
+			VelocityHandler.Velocity = Vector3.new()
+		end
+
+		-- Alignement Gyro / Caméra
+		if not isAntiLockOn then
+			local camera = workspace.CurrentCamera
+			if isPitchOn and gyro then
+				gyro.CFrame = camera.CFrame
+			elseif gyro then
+				local flatLookVector = camera.CFrame.LookVector * Vector3.new(1, 0, 1)
+				gyro.CFrame = CFrame.new(gyro.Parent.Position, gyro.Parent.Position + flatLookVector)
+			end
+		end
+	else
+		if VelocityHandler then VelocityHandler.Velocity = Vector3.new() end
+	end
+end
+
+local function backupButtonPositions()
+	for button, originalPosition in pairs(originalButtonPositions) do
+		if button and button.Parent and button.Position == UDim2.new(0, 0, 0, 0) then
+			button.Position = originalPosition
+		end
+	end
+end
+
+-- ========= ASSIGNATIONS DES BOUTONS DE L'UI ORIGINALE =========
+local function setupButtonConnections()
+	table.insert(activeConnections, IncreaseButton.MouseButton1Click:Connect(function()
+		local currentSpeed = tonumber(SpeedTextBox.Text) or 1
+		SpeedTextBox.Text = tostring(currentSpeed + 1)
+	end))
+
+	table.insert(activeConnections, DecreaseButton.MouseButton1Click:Connect(function()  
+		local currentSpeed = tonumber(SpeedTextBox.Text) or 1  
+		SpeedTextBox.Text = tostring(math.max(1, currentSpeed - 1))  
+	end))  
+
+	table.insert(activeConnections, ForwardButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "forward") end))  
+	table.insert(activeConnections, ForwardButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "forward" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, BackwardButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "backward") end))  
+	table.insert(activeConnections, BackwardButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "backward" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, LeftButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "left") end))  
+	table.insert(activeConnections, LeftButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "left" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, RightButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "right") end))  
+	table.insert(activeConnections, RightButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "right" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, UpButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "up") end))  
+	table.insert(activeConnections, UpButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "up" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, DownButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "down") end))  
+	table.insert(activeConnections, DownButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "down" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, RotateLeftButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "rotateLeft") end))  
+	table.insert(activeConnections, RotateLeftButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "rotateLeft" then table.remove(movementDirection, i) end end end))  
+	table.insert(activeConnections, RotateRightButton.MouseButton1Down:Connect(function() table.insert(movementDirection, "rotateRight") end))  
+	table.insert(activeConnections, RotateRightButton.MouseButton1Up:Connect(function() for i = #movementDirection, 1, -1 do if movementDirection[i] == "rotateRight" then table.remove(movementDirection, i) end end end))  
+
+	table.insert(activeConnections, AntiLockButton.MouseButton1Click:Connect(function()  
+		isAntiLockOn = not isAntiLockOn  
+		AntiLockButton.Text = isAntiLockOn and "A-L On" or "A-L"
+		if isAntiLockOn and isPitchOn then isPitchOn = false PitchButton.Text = "Pitch: Off" end
+	end))  
+
+	table.insert(activeConnections, PitchButton.MouseButton1Click:Connect(function()  
+		if not isAntiLockOn then  
+			isPitchOn = not isPitchOn  
+			PitchButton.Text = isPitchOn and "Pitch: On" or "Pitch: Off"
+		end  
+	end))  
+end
+
+local function cleanup()
+	DisableFlight()
+	cleanupConnections()
+	movementDirection = {}
+	controllerEnabled = false
+	if seatConnection then seatConnection:Disconnect() end
+	if unseatConnection then unseatConnection:Disconnect() end
+	seatConnection = nil unseatConnection = nil
+	FlyEnabled = false flightWithoutFlyEnabled = false
+	
+	if ScreenGui then ScreenGui:Destroy() end
+	if ControllerGui then ControllerGui:Destroy() end
+	if LeftSideGui then LeftSideGui:Destroy() end
+	originalButtonPositions = {}
+end
+
+-- ========= INITIALISATION ET COMPORTEMENTS DU VOL TACTILE =========
+local function initialize()
+	initializeGUI()
+	setupEventListeners()
+	DestroyButton.MouseButton1Click:Connect(cleanup)  
+
+	local function toggleFlightCore()
+		FlyEnabled = not FlyEnabled
+		local character = player.Character
+		local humanoid = character and character:FindFirstChild("Humanoid")
+		
+		if FlyEnabled then
+			FlyButton.Text = "UnFly"
+			if flightWithoutFlyEnabled then EnableFlight()
+			elseif humanoid then
+				if seatConnection then seatConnection:Disconnect() end
+				if unseatConnection then unseatConnection:Disconnect() end
+				if humanoid.SeatPart then EnableFlight()
+				else
+					seatConnection = humanoid:GetPropertyChangedSignal("SeatPart"):Connect(function()
+						if humanoid.SeatPart then EnableFlight() end
+					end)
+				end
+				unseatConnection = humanoid:GetPropertyChangedSignal("SeatPart"):Connect(function()
+					if not humanoid.SeatPart then DisableFlight() end
+				end)
+			end
+		else
+			FlyButton.Text = "Fly"
+			DisableFlight()
+			if seatConnection then seatConnection:Disconnect() end
+			if unseatConnection then unseatConnection:Disconnect() end
+			seatConnection = nil unseatConnection = nil
+		end
+	end
+
+	FlyButton.MouseButton1Click:Connect(toggleFlightCore)
+
+	FwFButton.MouseButton1Click:Connect(function()
+		flightWithoutFlyEnabled = not flightWithoutFlyEnabled
+		FwFButton.Text = flightWithoutFlyEnabled and "FwF On" or "FwF"
+		if FlyEnabled and not flightWithoutFlyEnabled then
+			local character = player.Character
+			local humanoid = character and character:FindFirstChild("Humanoid")
+			if humanoid and not humanoid.SeatPart then DisableFlight() end
+		end
+	end)
+
+	ControllerButton.MouseButton1Click:Connect(function()
+		controllerEnabled = not controllerEnabled
+		ControllerGui.Enabled = controllerEnabled
+		LeftSideGui.Enabled = controllerEnabled
+	end)
+
+	MinimizeButton.MouseButton1Click:Connect(function()
+		isGuiMinimized = not isGuiMinimized
+		if isGuiMinimized then
+			MinimizeButton.Text = "⇩"
+			originalMainFramePosition = MainFrame.Position
+			MainFrame:TweenSizeAndPosition(UDim2.new(0, 200, 0, 50), UDim2.new(MainFrame.Position.X.Scale, MainFrame.Position.X.Offset, MainFrame.Position.Y.Scale, MainFrame.Position.Y.Offset + (MainFrame.Size.Y.Offset - 50) / 2), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+			Title.Visible = true Title.Size = UDim2.new(1, 0, 1, 0) Title.Position = UDim2.new(0, 0, 0, 0)
+			InnerFrame.Visible = false
+		else
+			MinimizeButton.Text = "⇧"
+			MainFrame:TweenSizeAndPosition(UDim2.new(0, 200, 0, 230), originalMainFramePosition, Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+			Title.Visible = true Title.Size = UDim2.new(1, 0, 0.2, 0) Title.Position = UDim2.new(0, 0, 0, 0)
+			InnerFrame.Visible = true
+		end
+	end)
+end
+
+function setupEventListeners()
+	setupButtonConnections()
+	table.insert(activeConnections, RunService.RenderStepped:Connect(handleInput))
+	table.insert(activeConnections, RunService.Heartbeat:Connect(backupButtonPositions))
+end
+
+-- Lancement de l'interface visuelle
+initialize()
+
+-- ========= CONSTRUIRE LE MENU RAYFIELD =========
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+local Window = Rayfield:CreateWindow({
+	Name = "Shido Vehicle Menu v3.5",
+	LoadingTitle = "Chargement Master Engine...",
+	LoadingSubtitle = "by Shido",
+	ConfigurationSaving = { Enabled = true, FolderName = "ShidoMenu", FileName = "Config" },
+	KeySystem = false
+})
+
+-- Pages Rayfield
+local BoostPage = Window:CreateTab("Boost", 4483362458)
+local BrakePage = Window:CreateTab("Frein", 4483362458)
+local JumpPage = Window:CreateTab("Jump", 4483362458)
+local SpeedPage = Window:CreateTab("Speed", 4483362458)
+local AdvancedFlyPage = Window:CreateTab("Vol Avancé", 4483362458)
+
+-- Sliders Page Physique au Sol
+BoostPage:CreateSlider({ Name = "Puissance Boost", Range = {0,100}, Increment = 1, Suffix = "%", CurrentValue = velocityMult*100, Callback = function(v) velocityMult = v/100 end })
+BrakePage:CreateSlider({ Name = "Puissance Frein", Range = {0,100}, Increment = 1, Suffix = "%", CurrentValue = velocityMult2*100, Callback = function(v) velocityMult2 = v/100 end })
+JumpPage:CreateSlider({ Name = "Puissance Jump", Range = {0,200}, Increment = 1, Suffix = " stud", CurrentValue = jumpPower, Callback = function(v) jumpPower = v end })
+SpeedPage:CreateSlider({ Name = "Vitesse Max", Range = {100,2000}, Increment = 50, Suffix = " MPH", CurrentValue = maxMPH, Callback = function(v) maxMPH = v end })
+SpeedPage:CreateSlider({ Name = "Accélération", Range = {50,1000}, Increment = 50, Suffix = " MPH/s", CurrentValue = accelerationMPH, Callback = function(v) accelerationMPH = v end })
+SpeedPage:CreateToggle({ Name = "Mode Réaliste", CurrentValue = false, Callback = function(value) realisticMode = value end })
+
+-- Controles Page Vol Avancé branchés sur les variables mécaniques
+local FlyToggleUI = AdvancedFlyPage:CreateToggle({
+	Name = "Activer Vol",
+	CurrentValue = false,
+	Callback = function(v)
+		if v ~= FlyEnabled then
+			FlyEnabled = v
+			FlyButton.Text = FlyEnabled and "UnFly" or "Fly"
+			if FlyEnabled then EnableFlight() else DisableFlight() end
+		end
+	end
+})
+
+AdvancedFlyPage:CreateToggle({
+	Name = "Vol sans Siège (FwF Mode)",
+	CurrentValue = false,
+	Callback = function(v)
+		flightWithoutFlyEnabled = v
+		FwFButton.Text = flightWithoutFlyEnabled and "FwF On" or "FwF"
+	end
+})
+
+AdvancedFlyPage:CreateToggle({
+	Name = "Anti-Lock (A-L)",
+	CurrentValue = false,
+	Callback = function(v)
+		isAntiLockOn = v
+		AntiLockButton.Text = isAntiLockOn and "A-L On" or "A-L"
+	end
+})
+
+AdvancedFlyPage:CreateToggle({
+	Name = "Axe Inclinaison (Pitch)",
+	CurrentValue = false,
+	Callback = function(v)
+		isPitchOn = v
+		PitchButton.Text = isPitchOn and "Pitch: On" or "Pitch: Off"
+	end
+})
+
+-- Ajustements de la vitesse du Vol
+AdvancedFlyPage:CreateSlider({
+	Name = "Multiplicateur de Vitesse Global (Vol)",
+	Range = {1, 50},
+	Increment = 1,
+	Suffix = "x",
+	CurrentValue = flyGlobalSpeedMultiplier,
+	Callback = function(v) flyGlobalSpeedMultiplier = v end
+})
+
+AdvancedFlyPage:CreateSlider({
+	Name = "Vitesse Avant/Arrière",
+	Range = {10, 500},
+	Increment = 10,
+	Suffix = " Power",
+	CurrentValue = forwardVelocity,
+	Callback = function(v) forwardVelocity = v end
+})
+
+AdvancedFlyPage:CreateSlider({
+	Name = "Vitesse Verticale (Monter/Descendre)",
+	Range = {10, 300},
+	Increment = 5,
+	Suffix = " Power",
+	CurrentValue = upVelocity,
+	Callback = function(v) upVelocity = v downVelocity = v end
+})
+
+-- ========= REBIND DES TOUCHES DYNAMIQUES =========
+local waitingBind = nil
+local rebindButtons = {}
+
+local function startBind(action)
+	waitingBind = action
+	Rayfield:Notify({Title = "Rebind", Content = "Appuie sur une touche de ton clavier ou de ta manette", Duration = 4})
+end
+
+local function getBindText(action)
+	return "[" .. binds[action].Keyboard.Name .. "] / [" .. binds[action].Gamepad.Name .. "]"
+end
+
+rebindButtons.boost = BoostPage:CreateButton({ Name = "Changer Boost " .. getBindText("boost"), Callback = function() startBind("boost") end })
+rebindButtons.brake = BrakePage:CreateButton({ Name = "Changer Frein " .. getBindText("brake"), Callback = function() startBind("brake") end })
+rebindButtons.stop = BrakePage:CreateButton({ Name = "Changer Stop " .. getBindText("stop"), Callback = function() startBind("stop") end })
+rebindButtons.jump = JumpPage:CreateButton({ Name = "Changer Jump " .. getBindText("jump"), Callback = function() startBind("jump") end })
+rebindButtons.accel = SpeedPage:CreateButton({ Name = "Changer Accélération " .. getBindText("accel"), Callback = function() startBind("accel") end })
+rebindButtons.flyToggle = AdvancedFlyPage:CreateButton({ Name = "Touche Activer Vol " .. getBindText("flyToggle"), Callback = function() startBind("flyToggle") end })
+
+-- ========= ECOUTEURS INTERNES INPUTBEGAN / ENDED (MANETTE & CLAVIER) =========
+local function checkInputMatch(input, action)
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		return input.KeyCode == binds[action].Keyboard
+	elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
+		return input.KeyCode == binds[action].Gamepad
+	end
+	return false
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+
+	-- Traitement des demandes de Rebind
+	if waitingBind then
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			binds[waitingBind].Keyboard = input.KeyCode
+		elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
+			binds[waitingBind].Gamepad = input.KeyCode
+		else
+			return
+		end
+		
+		if rebindButtons[waitingBind] then
+			local ActionCleanName = waitingBind:gsub("^%l", string.upper)
+			if waitingBind == "flyToggle" then ActionCleanName = "Activer Vol" end
+			rebindButtons[waitingBind]:Set("Changer " .. ActionCleanName .. " " .. getBindText(waitingBind))
+		end
+		
+		waitingBind = nil
+		Rayfield:Notify({Title="Rebind", Content="Touche mise à jour !", Duration=2})
+		return
+	end
+
+	-- Triggers d'actions physiques standards
+	if checkInputMatch(input, "boost") then Boost()
+	elseif checkInputMatch(input, "accel") then accelerating = true
+	elseif checkInputMatch(input, "brake") then Brake()
+	elseif checkInputMatch(input, "stop") then Stop()
+	elseif checkInputMatch(input, "jump") then Jump()
+	elseif checkInputMatch(input, "flyToggle") then 
+		FlyEnabled = not FlyEnabled
+		FlyButton.Text = FlyEnabled and "UnFly" or "Fly"
+		FlyToggleUI:Set(FlyEnabled)
+		if FlyEnabled then EnableFlight() else DisableFlight() end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if checkInputMatch(input, "accel") then 
+		accelerating = false 
+	end
+end)
+
+-- Nettoyage automatique en cas de mort ou respawn
+player.CharacterAdded:Connect(function()
+	FlyEnabled = false
+	DisableFlight()
+	if seatConnection then seatConnection:Disconnect() end
+	if unseatConnection then unseatConnection:Disconnect() end
+end)
