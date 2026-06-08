@@ -895,3 +895,227 @@ player.CharacterAdded:Connect(function()
 	if seatConnection then seatConnection:Disconnect() end
 	if unseatConnection then unseatConnection:Disconnect() end
 end)
+-- =====================================================================================
+-- 1. REPRISE CORRECTE ET FERMETURE DE LA TABLE DU CODE D'ORIGINE
+-- =====================================================================================
+                    TextSize = 9;
+                    BackgroundColor3 = rgb(255, 255, 255)
+                });  
+
+                Esp:Create( "UIStroke", {  
+                    Parent = Items.Distance;  
+                    LineJoinMode = Enum.LineJoinMode.Miter  
+                });  
+
+                -- Création du Tracer (Ligne) aligné sur les couleurs du menu
+                Items.Tracer = Esp:Create("Frame", {
+                    Parent = Esp.ScreenGui,
+                    Visible = false,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = Options["Tracers_Color"] and Options["Tracers_Color"].Color or rgb(255, 255, 255),
+                    ZIndex = 1
+                })
+
+                -- Création du Squelette complet aligné sur les couleurs du menu
+                Items.Skeleton = {}
+                local Joints = {
+                    "Head_UpperTorso", "UpperTorso_LowerTorso", 
+                    "UpperTorso_LeftUpperArm", "LeftUpperArm_LeftLowerArm", "LeftLowerArm_LeftHand",
+                    "UpperTorso_RightUpperArm", "RightUpperArm_RightLowerArm", "RightLowerArm_RightHand",
+                    "LowerTorso_LeftUpperLeg", "LeftUpperLeg_LeftLowerLeg", "LeftLowerLeg_LeftFoot",
+                    "LowerTorso_RightUpperLeg", "RightUpperLeg_RightLowerLeg", "RightLowerLeg_RightFoot"
+                }
+                for _, JointName in ipairs(Joints) do
+                    Items.Skeleton[JointName] = Esp:Create("Frame", {
+                        Parent = Esp.ScreenGui,
+                        Visible = false,
+                        BorderSizePixel = 0,
+                        BackgroundColor3 = Options["Skeleton_Color"] and Options["Skeleton_Color"].Color or rgb(255, 255, 255),
+                        ZIndex = 2
+                    })
+                end
+
+                Items.ChamsHighlight = Esp:Create("Highlight", {
+                    Parent = Esp.ScreenGui,
+                    Enabled = false,
+                    DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                })
+        end
+
+        Esp.Players[player] = Data
+        return Data
+    end
+
+    function Esp:Unload()
+        for _, connection in pairs(Esp.Connections) do
+            connection:Disconnect()
+        end
+        Esp.ScreenGui:Destroy()
+        Esp.Cache:Destroy()
+        getgenv().Esp = nil
+    end
+end
+
+-- Fonction utilitaire pour dessiner les éléments 2D (Lignes & Os)
+local function Draw2DLine(UIFrame, PointA, PointB, Thickness, Color)
+    local Distance = (PointA - PointB).Magnitude
+    UIFrame.Size = UDim2.fromOffset(Distance, Thickness)
+    UIFrame.Position = UDim2.fromOffset((PointA.X + PointB.X) / 2, (PointA.Y + PointB.Y) / 2)
+    UIFrame.Rotation = math.deg(math.atan2(PointB.Y - PointA.Y, PointB.X - PointA.X))
+    UIFrame.BackgroundColor3 = Color
+    UIFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    UIFrame.Visible = true
+end
+
+-- =====================================================================================
+-- 2. BOUCLE D'ACTUALISATION SYNCHRONISÉE ET ADAPTATIVE AU MENU
+-- =====================================================================================
+Esp:Connection(RunService.RenderStepped, function()
+    -- Vérification globale : Est-ce que l'ESP est activé dans le menu ?
+    if not Options["Enabled"] then
+        Esp.ScreenGui.Enabled = false
+        return
+    else
+        Esp.ScreenGui.Enabled = true
+    end
+
+    -- Origine des lignes (Bas de l'écran au milieu)
+    local ScreenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+
+    for Player, Data in pairs(Esp.Players) do
+        if Player and Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") then
+            local Char = Player.Character
+            local Torso = Char.HumanoidRootPart
+            local Hum = Char:FindFirstChildOfClass("Humanoid")
+
+            if Hum and Hum.Health > 0 then
+                local BoxSize, BoxPosition, OnScreen, NewDistance = Esp:BoxSolve(Torso)
+
+                if OnScreen and NewDistance <= Options["Render Distance"] then
+                    
+                    -- 1. Gestion adaptative des BOXES
+                    if Options["Boxes"] then
+                        Data.Items.Holder.Visible = true
+                        Data.Items.Holder.Size = dim2(0, BoxSize.X, 0, BoxSize.Y)
+                        Data.Items.Holder.Position = dim2(0, BoxPosition.X, 0, BoxPosition.Y)
+                        if Options["Box_Color"] then
+                            Data.Items.Holder.BorderColor3 = Options["Box_Color"].Color
+                        end
+                    else
+                        Data.Items.Holder.Visible = false
+                    end
+
+                    -- 2. Gestion adaptative des LINES / TRACERS
+                    if Options["Tracers"] or Options["Lines"] then
+                        local HeadPos, HeadOnScreen = Esp:ConvertScreenPoint(Char:FindFirstChild("Head") and Char.Head.Position or Torso.Position)
+                        local TracerColor = Options["Tracers_Color"] and Options["Tracers_Color"].Color or rgb(255, 255, 255)
+                        Draw2DLine(Data.Items.Tracer, ScreenCenter, Vector2.new(HeadPos.X, HeadPos.Y), 1.5, TracerColor)
+                    else
+                        Data.Items.Tracer.Visible = false
+                    end
+
+                    -- 3. Gestion adaptative du SQUELETTE
+                    if Options["Skeleton"] or Options["Skeletons"] then
+                        local SkeletonColor = Options["Skeleton_Color"] and Options["Skeleton_Color"].Color or rgb(255, 255, 255)
+                        
+                        local function GetBonePos(PartName)
+                            local Part = Char:FindFirstChild(PartName)
+                            if Part then
+                                local Pos, Visible = Esp:ConvertScreenPoint(Part.Position)
+                                if Visible then return Vector2.new(Pos.X, Pos.Y) end
+                            end
+                            return nil
+                        end
+
+                        local JointsTable = {
+                            {"Head_UpperTorso", "Head", "UpperTorso"},
+                            {"UpperTorso_LowerTorso", "UpperTorso", "LowerTorso"},
+                            {"UpperTorso_LeftUpperArm", "UpperTorso", "LeftUpperArm"},
+                            {"LeftUpperArm_LeftLowerArm", "LeftUpperArm", "LeftLowerArm"},
+                            {"LeftLowerArm_LeftHand", "LeftLowerArm", "LeftHand"},
+                            {"UpperTorso_RightUpperArm", "UpperTorso", "RightUpperArm"},
+                            {"RightUpperArm_RightLowerArm", "RightUpperArm", "RightLowerArm"},
+                            {"RightLowerArm_RightHand", "RightLowerArm", "RightHand"},
+                            {"LowerTorso_LeftUpperLeg", "LowerTorso", "LeftUpperLeg"},
+                            {"LeftUpperLeg_LeftLowerLeg", "LeftUpperLeg", "LeftLowerLeg"},
+                            {"LeftLowerLeg_LeftFoot", "LeftLowerLeg", "LeftFoot"},
+                            {"LowerTorso_RightUpperLeg", "LowerTorso", "RightUpperLeg"},
+                            {"RightUpperLeg_RightLowerLeg", "RightUpperLeg", "RightLowerLeg"},
+                            {"RightLowerLeg_RightFoot", "RightLowerLeg", "RightFoot"}
+                        }
+
+                        if Char:FindFirstChild("Torso") then -- Détection automatique R6
+                            JointsTable = {
+                                {"Head_UpperTorso", "Head", "Torso"},
+                                {"UpperTorso_LeftUpperArm", "Torso", "Left Arm"},
+                                {"UpperTorso_RightUpperArm", "Torso", "Right Arm"},
+                                {"LowerTorso_LeftUpperLeg", "Torso", "Left Leg"},
+                                {"LowerTorso_RightUpperLeg", "Torso", "Right Leg"}
+                            }
+                        end
+
+                        for _, Link in ipairs(JointsTable) do
+                            local PosA = GetBonePos(Link[2])
+                            local PosB = GetBonePos(Link[3])
+                            if PosA and PosB and Data.Items.Skeleton[Link[1]] then
+                                Draw2DLine(Data.Items.Skeleton[Link[1]], PosA, PosB, 1.5, SkeletonColor)
+                            else
+                                if Data.Items.Skeleton[Link[1]] then Data.Items.Skeleton[Link[1]].Visible = false end
+                            end
+                        end
+                    else
+                        for _, Bone in pairs(Data.Items.Skeleton) do Bone.Visible = false end
+                    end
+
+                    -- 4. Options Textes (Distance & Barre de vie)
+                    if Options["Distance_Text"] then
+                        Data.Items.Distance.Visible = true
+                        Data.Items.Distance.Text = string.format("[%d studs]", math.floor(NewDistance / 0.333))
+                    else
+                        Data.Items.Distance.Visible = false
+                    end
+
+                    if Options["Healthbar"] then
+                        Data.Items.Healthbar.Visible = true
+                        local HealthPercent = math.clamp(Hum.Health / Hum.MaxHealth, 0, 1)
+                        Data.Items.HealthbarAccent.Size = dim2(1, -2, HealthPercent, -2)
+                    else
+                        Data.Items.Healthbar.Visible = false
+                    end
+
+                else
+                    -- Masquer si hors de portée ou hors de l'écran
+                    Data.Items.Holder.Visible = false
+                    Data.Items.Tracer.Visible = false
+                    for _, Bone in pairs(Data.Items.Skeleton) do Bone.Visible = false end
+                end
+            else
+                -- Masquer si le joueur est mort
+                Data.Items.Holder.Visible = false
+                Data.Items.Tracer.Visible = false
+                for _, Bone in pairs(Data.Items.Skeleton) do Bone.Visible = false end
+            end
+        end
+    end
+end)
+
+-- =====================================================================================
+-- 3. ENREGISTREMENT ET ECOUTEURS DES JOUEURS
+-- =====================================================================================
+local function RegisterPlayer(p)
+    if p ~= LocalPlayer then Esp.CreateObject(p) end
+end
+
+Esp:Connection(Players.PlayerAdded, RegisterPlayer)
+Esp:Connection(Players.PlayerRemoving, function(p)
+    if Esp.Players[p] then
+        pcall(function()
+            Esp.Players[p].Items.Holder:Destroy()
+            Esp.Players[p].Items.Tracer:Destroy()
+            for _, Bone in pairs(Esp.Players[p].Items.Skeleton) do Bone:Destroy() end
+        end)
+        Esp.Players[p] = nil
+    end
+end)
+
+for _, p in pairs(Players:GetPlayers()) do RegisterPlayer(p) end
